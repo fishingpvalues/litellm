@@ -1747,6 +1747,64 @@ class StreamingCallbackError(Exception):
     pass
 
 
+
+def get_remaining_budget_from_cache(
+    user_api_key_dict: UserAPIKeyAuth,
+    response_cost: Optional[float] = None
+) -> dict:
+    """
+    Calculates remaining budget using CACHED values from user_api_key_dict.
+
+    ZERO DATABASE QUERIES - uses only in-memory cached data loaded during auth.
+    This is extremely fast and doesn't add latency to requests.
+
+    Args:
+        user_api_key_dict: Contains cached spend/budget from auth
+        response_cost: Optional current request cost (for post-call accuracy)
+
+    Returns:
+        Dict with "key"/"user"/"team" remaining budgets
+
+    Enterprise-grade: Supports key, user, and team budgets automatically.
+    Performance: No DB queries, pure calculation from cached values.
+    """
+    remaining = {}
+
+    try:
+        # Calculate current spend (add response_cost if post-call)
+        current_spend = user_api_key_dict.spend or 0.0
+        if response_cost is not None:
+            try:
+                cost_value = float(response_cost) if isinstance(response_cost, str) else response_cost
+                if cost_value > 0:
+                    current_spend += cost_value
+            except (ValueError, TypeError):
+                pass  # Use original spend on conversion failure
+
+        # Key budget (from cached user_api_key_dict)
+        if user_api_key_dict.max_budget is not None:
+            remaining["key"] = user_api_key_dict.max_budget - current_spend
+
+        # User budget (from cached user_api_key_dict)
+        # Note: user_api_key_dict contains aggregated user budget info loaded during auth
+        if hasattr(user_api_key_dict, "user_max_budget") and user_api_key_dict.user_max_budget is not None:
+            user_spend = getattr(user_api_key_dict, "user_spend", 0) or 0
+            remaining["user"] = user_api_key_dict.user_max_budget - user_spend
+
+        # Team budget (from cached user_api_key_dict)
+        if hasattr(user_api_key_dict, "team_max_budget") and user_api_key_dict.team_max_budget is not None:
+            team_spend = getattr(user_api_key_dict, "team_spend", 0) or 0
+            remaining["team"] = user_api_key_dict.team_max_budget - team_spend
+
+    except Exception as e:
+        # Log error but don't break the request - budget headers are optional metadata
+        verbose_proxy_logger.debug(
+            f"Error calculating remaining budget: {str(e)}. Skipping budget headers."
+        )
+        return {}
+
+    return remaining
+
 class ProxyConfig:
     """
     Abstraction class on top of config loading/updating logic. Gives us one place to control all config updating logic.
@@ -5027,9 +5085,20 @@ async def chat_completion(  # noqa: PLR0915
     ```
 
     """
-    global general_settings, user_debug, proxy_logging_obj, llm_model_list
+    global general_settings, user_debug, proxy_logging_obj, llm_model_list, prisma_client
     global user_temperature, user_request_timeout, user_max_tokens, user_api_base
     data = await _read_request_body(request=request)
+    
+    if data.get("stream", False):
+        # For stream: Use cached budget (pre-call, no response cost yet)
+        budget_remaining = get_remaining_budget_from_cache(user_api_key_dict)
+        if "key" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-Key"] = f"{budget_remaining['key']:.2f}"
+        if "user" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-User"] = f"{budget_remaining['user']:.2f}"
+        if "team" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-Team"] = f"{budget_remaining['team']:.2f}"
+    
     base_llm_response_processor = ProxyBaseLLMRequestProcessing(data=data)
     try:
         result = await base_llm_response_processor.base_process_llm_request(
@@ -5051,6 +5120,18 @@ async def chat_completion(  # noqa: PLR0915
             version=version,
         )
         if isinstance(result, BaseModel):
+            
+            if not data.get("stream", False):
+                # Post-call: Calculate remaining with response cost (from cached values)
+                response_cost = getattr(result, "_hidden_params", {}).get("response_cost", 0)
+                budget_remaining = get_remaining_budget_from_cache(user_api_key_dict, response_cost)
+                if "key" in budget_remaining:
+                    fastapi_response.headers["X-LiteLLM-Budget-Remaining-Key"] = f"{budget_remaining['key']:.2f}"
+                if "user" in budget_remaining:
+                    fastapi_response.headers["X-LiteLLM-Budget-Remaining-User"] = f"{budget_remaining['user']:.2f}"
+                if "team" in budget_remaining:
+                    fastapi_response.headers["X-LiteLLM-Budget-Remaining-Team"] = f"{budget_remaining['team']:.2f}"
+            
             return model_dump_with_preserved_fields(result, exclude_unset=True)
         else:
             return result
@@ -5177,12 +5258,22 @@ async def completion(  # noqa: PLR0915
     }'
     ```
     """
-    global user_temperature, user_request_timeout, user_max_tokens, user_api_base
+    global user_temperature, user_request_timeout, user_max_tokens, user_api_base, prisma_client
     data = {}
     try:
         data = await _read_request_body(request=request)
+        if data.get("stream", False):
+            # For stream: Use cached budget (pre-call, no response cost yet)
+            budget_remaining = get_remaining_budget_from_cache(user_api_key_dict)
+            if "key" in budget_remaining:
+                fastapi_response.headers["X-LiteLLM-Budget-Remaining-Key"] = f"{budget_remaining['key']:.2f}"
+            if "user" in budget_remaining:
+                fastapi_response.headers["X-LiteLLM-Budget-Remaining-User"] = f"{budget_remaining['user']:.2f}"
+            if "team" in budget_remaining:
+                fastapi_response.headers["X-LiteLLM-Budget-Remaining-Team"] = f"{budget_remaining['team']:.2f}"
+
         base_llm_response_processor = ProxyBaseLLMRequestProcessing(data=data)
-        return await base_llm_response_processor.base_process_llm_request(
+        result = await base_llm_response_processor.base_process_llm_request(
             request=request,
             fastapi_response=fastapi_response,
             user_api_key_dict=user_api_key_dict,
@@ -5200,6 +5291,19 @@ async def completion(  # noqa: PLR0915
             user_api_base=user_api_base,
             version=version,
         )
+
+        if not data.get("stream", False):
+            # Post-call: Calculate remaining with response cost (from cached values)
+            response_cost = getattr(result, "_hidden_params", {}).get("response_cost", 0)
+            budget_remaining = get_remaining_budget_from_cache(user_api_key_dict, response_cost)
+            if "key" in budget_remaining:
+                fastapi_response.headers["X-LiteLLM-Budget-Remaining-Key"] = f"{budget_remaining['key']:.2f}"
+            if "user" in budget_remaining:
+                fastapi_response.headers["X-LiteLLM-Budget-Remaining-User"] = f"{budget_remaining['user']:.2f}"
+            if "team" in budget_remaining:
+                fastapi_response.headers["X-LiteLLM-Budget-Remaining-Team"] = f"{budget_remaining['team']:.2f}"
+
+        return result
     except ModifyResponseException as e:
         # Guardrail flagged content in passthrough mode - return 200 with violation message
         _data = e.request_data
@@ -5361,7 +5465,7 @@ async def embeddings(  # noqa: PLR0915
     ```
 
 """
-    global proxy_logging_obj
+    global proxy_logging_obj, prisma_client
     data: Any = {}
     try:
         # Use shared request body reading helper (same as chat/completions)
@@ -5422,6 +5526,16 @@ async def embeddings(  # noqa: PLR0915
             user_api_base=user_api_base,
             version=version,
         )
+
+        # Post-call: Calculate remaining with response cost (from cached values)
+        response_cost = getattr(response, "_hidden_params", {}).get("response_cost", 0)
+        budget_remaining = get_remaining_budget_from_cache(user_api_key_dict, response_cost)
+        if "key" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-Key"] = f"{budget_remaining['key']:.2f}"
+        if "user" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-User"] = f"{budget_remaining['user']:.2f}"
+        if "team" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-Team"] = f"{budget_remaining['team']:.2f}"
 
         return response
     except Exception as e:
@@ -5528,6 +5642,16 @@ async def moderations(
                 hidden_params=hidden_params,
             )
         )
+
+        # Add budget remaining headers (calculated from cached values)
+        response_cost = hidden_params.get("response_cost", 0)
+        budget_remaining = get_remaining_budget_from_cache(user_api_key_dict, response_cost)
+        if "key" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-Key"] = f"{budget_remaining['key']:.2f}"
+        if "user" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-User"] = f"{budget_remaining['user']:.2f}"
+        if "team" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-Team"] = f"{budget_remaining['team']:.2f}"
 
         return response
     except Exception as e:
@@ -5653,6 +5777,15 @@ async def audio_speech(
             request_data=data,
             hidden_params=hidden_params,
         )
+
+        # Add budget remaining headers (calculated from cached values, pre-call for streaming)
+        budget_remaining = get_remaining_budget_from_cache(user_api_key_dict)
+        if "key" in budget_remaining:
+            custom_headers["X-LiteLLM-Budget-Remaining-Key"] = f"{budget_remaining['key']:.2f}"
+        if "user" in budget_remaining:
+            custom_headers["X-LiteLLM-Budget-Remaining-User"] = f"{budget_remaining['user']:.2f}"
+        if "team" in budget_remaining:
+            custom_headers["X-LiteLLM-Budget-Remaining-Team"] = f"{budget_remaining['team']:.2f}"
 
         # Determine media type based on model type
         media_type = "audio/mpeg"  # Default for OpenAI TTS
@@ -5805,6 +5938,16 @@ async def audio_transcriptions(
                 **additional_headers,
             )
         )
+
+        # Add budget remaining headers (calculated from cached values)
+        response_cost = hidden_params.get("response_cost", 0)
+        budget_remaining = get_remaining_budget_from_cache(user_api_key_dict, response_cost)
+        if "key" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-Key"] = f"{budget_remaining['key']:.2f}"
+        if "user" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-User"] = f"{budget_remaining['user']:.2f}"
+        if "team" in budget_remaining:
+            fastapi_response.headers["X-LiteLLM-Budget-Remaining-Team"] = f"{budget_remaining['team']:.2f}"
 
         return response
     except Exception as e:

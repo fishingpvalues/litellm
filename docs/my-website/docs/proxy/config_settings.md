@@ -421,6 +421,12 @@ router_settings:
 | AZURE_STORAGE_TENANT_ID | The Application Tenant ID to use for Authentication to Azure Blob Storage logging
 | AZURE_STORAGE_CLIENT_ID | The Application Client ID to use for Authentication to Azure Blob Storage logging
 | AZURE_STORAGE_CLIENT_SECRET | The Application Client Secret to use for Authentication to Azure Blob Storage logging
+| AZURE_SENTINEL_CLIENT_ID | Client ID for Azure Sentinel integration
+| AZURE_SENTINEL_CLIENT_SECRET | Client secret for Azure Sentinel integration
+| AZURE_SENTINEL_DCR_IMMUTABLE_ID | Immutable ID for Azure Sentinel Data Collection Rule
+| AZURE_SENTINEL_ENDPOINT | Endpoint URL for Azure Sentinel
+| AZURE_SENTINEL_STREAM_NAME | Stream name for Azure Sentinel logging
+| AZURE_SENTINEL_TENANT_ID | Tenant ID for Azure Sentinel
 | AZURE_VECTOR_STORE_COST_PER_GB_PER_DAY | Cost per GB per day for Azure Vector Store service
 | BATCH_STATUS_POLL_INTERVAL_SECONDS | Interval in seconds for polling batch status. Default is 3600 (1 hour)
 | BATCH_STATUS_POLL_MAX_ATTEMPTS | Maximum number of attempts for polling batch status. Default is 24 (for 24 hours)
@@ -544,7 +550,9 @@ router_settings:
 | EMAIL_SUPPORT_CONTACT | Support contact email address
 | EMAIL_SIGNATURE | Custom HTML footer/signature for all emails. Can include HTML tags for formatting and links.
 | EMAIL_SUBJECT_INVITATION | Custom subject template for invitation emails. 
-| EMAIL_SUBJECT_KEY_CREATED | Custom subject template for key creation emails. 
+| EMAIL_SUBJECT_KEY_CREATED | Custom subject template for key creation emails.
+| EMAIL_BUDGET_ALERT_MAX_SPEND_ALERT_PERCENTAGE | Maximum spend percentage for budget alert emails
+| EMAIL_BUDGET_ALERT_TTL | Time-to-live for budget alert emails
 | ENKRYPTAI_API_BASE | Base URL for EnkryptAI Guardrails API. **Default is https://api.enkryptai.com**
 | ENKRYPTAI_API_KEY | API key for EnkryptAI Guardrails service
 | EXPERIMENTAL_MULTI_INSTANCE_RATE_LIMITING | Flag to enable new multi-instance rate limiting. **Default is False**
@@ -596,6 +604,8 @@ router_settings:
 | GREENSCALE_ENDPOINT | Endpoint URL for Greenscale service
 | GRAYSWAN_API_BASE | Base URL for GraySwan API. Default is https://api.grayswan.ai
 | GRAYSWAN_API_KEY | API key for GraySwan Cygnal service
+| GRAYSWAN_REASONING_MODE | Reasoning mode for GraySwan service
+| GRAYSWAN_VIOLATION_THRESHOLD | Violation threshold for GraySwan guardrails
 | GOOGLE_APPLICATION_CREDENTIALS | Path to Google Cloud credentials JSON file
 | GOOGLE_CLIENT_ID | Client ID for Google OAuth
 | GOOGLE_CLIENT_SECRET | Client secret for Google OAuth
@@ -789,6 +799,7 @@ router_settings:
 | QDRANT_SCALAR_QUANTILE | Scalar quantile for Qdrant operations. Default is 0.99
 | QDRANT_URL | Connection URL for Qdrant database
 | QDRANT_VECTOR_SIZE | Vector size for Qdrant operations. Default is 1536
+| RESEND_API_KEY | API key for Resend email service
 | REDIS_CONNECTION_POOL_TIMEOUT | Timeout in seconds for Redis connection pool. Default is 5
 | REDIS_HOST | Hostname for Redis server
 | REDIS_PASSWORD | Password for Redis service

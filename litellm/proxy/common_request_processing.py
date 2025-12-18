@@ -606,6 +606,13 @@ class ProxyBaseLLMRequestProcessing:
                 litellm_logging_obj=logging_obj,
                 **additional_headers,
             )
+
+            # Merge any headers from fastapi_response (e.g., budget headers) into custom_headers
+            if fastapi_response and hasattr(fastapi_response, "headers"):
+                for header_key, header_value in fastapi_response.headers.items():
+                    if header_key not in custom_headers:
+                        custom_headers[header_key] = header_value
+
             if route_type == "allm_passthrough_route":
                 # Check if response is an async generator
                 if self._is_streaming_response(response):
